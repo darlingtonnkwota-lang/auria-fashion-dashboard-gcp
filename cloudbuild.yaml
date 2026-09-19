@@ -1,0 +1,43 @@
+# One Cloud Build config, parameterized by the _ENV substitution.
+# The dev trigger (branch: ^dev$) sets _ENV=dev; the prod trigger
+# (branch: ^main$) sets _ENV=prod. Same steps, different target service —
+# that's what makes "merge dev into main" the actual promotion mechanism,
+# not a separate manual deploy.
+
+substitutions:
+  _ENV: "dev"          # overridden per-trigger in the Cloud Build console
+  _REGION: "us-central1"
+
+steps:
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - us-central1-docker.pkg.dev/$PROJECT_ID/auria/backend-${_ENV}:$SHORT_SHA
+      - ./app
+
+  - id: push
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - us-central1-docker.pkg.dev/$PROJECT_ID/auria/backend-${_ENV}:$SHORT_SHA
+
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - auria-backend-${_ENV}
+      - --image=us-central1-docker.pkg.dev/$PROJECT_ID/auria/backend-${_ENV}:$SHORT_SHA
+      - --region=${_REGION}
+      - --platform=managed
+      - --allow-unauthenticated
+      - --quiet
+
+images:
+  - us-central1-docker.pkg.dev/$PROJECT_ID/auria/backend-${_ENV}:$SHORT_SHA
+
+options:
+  logging: CLOUD_LOGGING_ONLY

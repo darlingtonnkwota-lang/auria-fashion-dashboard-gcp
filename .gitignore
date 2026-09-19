@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+
+# Env & secrets — never commit real credentials
+.env
+.env.*
+!.env.example
+*.key.json
+service-account*.json
+
+# OS / editor
+.DS_Store
+.vscode/
