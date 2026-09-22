@@ -43,8 +43,8 @@ TIMEOUT_SECONDS = 30
 # validate_gold_sql itself (that function only checks dataset/keyword
 # patterns, not this exact set), but used by callers/tests that want to
 # sanity-check a query's tables before even calling the BigQuery
-# function. 18 objects -- gold_sales_forecast will be added once GCP
-# Phase 6 (forecasting) builds that table.
+# function. 19 objects -- gold_sales_forecast (Phase 6) is the newest
+# addition.
 ALLOWED_TABLES = {
     "dim_customer",
     "dim_product",
@@ -64,6 +64,7 @@ ALLOWED_TABLES = {
     "gold_returns_by_product_monthly",
     "gold_channel_performance",
     "gold_supplier_performance",
+    "gold_sales_forecast",
 }
 
 

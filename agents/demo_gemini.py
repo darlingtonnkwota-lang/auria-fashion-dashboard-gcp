@@ -42,6 +42,8 @@ DEMO_QUESTIONS = [
     "Who are our top 10 customers by lifetime spend, and how many are repeat vs. one-time buyers?",
     "Which supplier has the longest average lead time, and did that contribute to any stockouts in the last two quarters?",
     "Show gross margin by product category for Q2 2026 vs. Q2 2025 in consolidated USD, and flag any category where margin declined.",
+    # Phase 6 -- forecast question, added once gold_sales_forecast existed.
+    "What do you project revenue and order volume to look like over the next six months?",
 ]
 
 ADVERSARIAL_SQL = [

@@ -124,9 +124,26 @@ terms:
       figure -- compare the two when a question asks whether a supplier is
       meeting its stated lead time.
 
+  Forecast:
+    definition: >
+      gold_sales_forecast.is_forecast distinguishes history (false) from
+      a forward-looking projection (true), for two metrics
+      ('revenue_usd', 'order_count'), up to 6 months ahead. A forecast row
+      always carries lower_bound/upper_bound (a 90% prediction interval);
+      history rows don't.
+    caveat: >
+      A forecast is a projection, not a fact -- always state it as a
+      range (lower_bound to upper_bound), never as a single
+      false-precision number, and never treat a forecast row as if it
+      were an actual. gold_monthly_kpis stays the authoritative source
+      for anything already known, including the current in-progress
+      calendar month (deliberately excluded from this table's history
+      rows for that reason).
+
 rules:
   - "Every revenue/AOV/margin/units figure defaults to order_status = 'Completed' unless the question is explicitly about cancellations."
   - "Region always means the customer's home region unless the question names store or warehouse geography specifically."
   - "Never re-convert a column already suffixed _usd."
   - "gold_dq_summary is an internal reconciliation table, not a reporting object -- never query it to answer a business question."
   - "Prefer a curated gold_* view when one already answers the question at the right grain; only join fct_*/dim_* tables directly when no curated view covers it."
+  - "gold_sales_forecast is forward-looking only -- never substitute its history rows for gold_monthly_kpis, and never state a forecast without its lower_bound/upper_bound range."

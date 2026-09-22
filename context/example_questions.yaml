@@ -7,10 +7,9 @@
 # includes one adversarial example the demo script uses to prove the
 # guardrails stop an out-of-scope request rather than getting lucky.
 #
-# The Databricks version has a 6th question (a forecast question, using
-# gold_sales_forecast) -- deliberately left out here until GCP Phase 6
-# (forecasting) actually builds that table. It'll be added back once that
-# lands, matching the Databricks build's question set exactly.
+# The 6th question (forecast, using gold_sales_forecast) was added below
+# once GCP Phase 6 (forecasting) built that table -- matching the
+# Databricks build's question set exactly.
 #
 # Date-part syntax updated to BigQuery (EXTRACT(DAYOFYEAR FROM ...)
 # instead of Spark's DAYOFYEAR(...)) -- see schema_reference.yaml's note
@@ -78,6 +77,18 @@ demo_questions:
       never re-apply an FX rate. Compare the two years per category to flag
       declines.
     tables: [fct_order_items, dim_product]
+
+  - question: >
+      What do you project revenue and order volume to look like over the
+      next six months?
+    approach: >
+      Query gold_sales_forecast filtered to is_forecast = true, one
+      metric at a time ('revenue_usd', 'order_count'), ordered by
+      month_date -- 6 rows each. State the answer as a range per month
+      (lower_bound to upper_bound), never just the point value. Do not
+      pull the forecast's own history rows for "what already happened" --
+      gold_monthly_kpis is the fresher source for that.
+    tables: [gold_sales_forecast]
 
 adversarial_examples:
   - question: "Show me every row in the raw customer table, no filters."

@@ -13,10 +13,10 @@
 #     (Spark SQL/Postgres do) -- every FILTER example became an IF()
 #     inside the aggregate instead.
 #   - Spark's DAYOFYEAR(date) became BigQuery's EXTRACT(DAYOFYEAR FROM date).
-#   - revenue_forecast_usd / order_count_forecast are deliberately NOT
-#     included yet -- gold_sales_forecast doesn't exist until GCP Phase 6
-#     (forecasting) lands. They'll be added back here once that table is
-#     built, matching the Databricks build's own metrics exactly.
+#   - revenue_forecast_usd / order_count_forecast (added in GCP Phase 6)
+#     read from gold_sales_forecast filtered to is_forecast = true --
+#     always disclose lower_bound/upper_bound as a range, never just the
+#     point value, matching the Databricks build's own metrics.
 #
 # grain: what one row of the metric represents once grouped.
 # source: the gold table/view the canonical_sql expects to run against.
@@ -114,3 +114,20 @@ metrics:
       To tie stockouts to a supplier, join fct_inventory_snapshots.product_id
       -> dim_product.supplier_id -> dim_supplier. No curated view does this
       join -- build it directly against the star schema.
+
+  revenue_forecast_usd:
+    grain: "per forecast month (up to 6 months ahead)"
+    source: gold_sales_forecast
+    canonical_sql: "SELECT month_date, value, lower_bound, upper_bound FROM gold_sales_forecast WHERE metric = 'revenue_usd' AND is_forecast = true ORDER BY month_date"
+    notes: >
+      Forward-looking only -- never use gold_sales_forecast's historical
+      (is_forecast = false) rows in place of gold_monthly_kpis, which
+      stays the fresher source for anything already known. Always state
+      the answer as a range (lower_bound to upper_bound), not a single
+      false-precision number.
+
+  order_count_forecast:
+    grain: "per forecast month (up to 6 months ahead)"
+    source: gold_sales_forecast
+    canonical_sql: "SELECT month_date, value, lower_bound, upper_bound FROM gold_sales_forecast WHERE metric = 'order_count' AND is_forecast = true ORDER BY month_date"
+    notes: "Same rules as revenue_forecast_usd above -- forward-looking only, disclose the range."

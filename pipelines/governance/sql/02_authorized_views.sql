@@ -78,3 +78,7 @@ SELECT * FROM `__PROJECT__.gold.gold_channel_performance`;
 
 CREATE OR REPLACE VIEW `__PROJECT__.authorized.gold_supplier_performance` AS
 SELECT * FROM `__PROJECT__.gold.gold_supplier_performance`;
+
+-- Phase 6: gold_sales_forecast is the 19th governed object.
+CREATE OR REPLACE VIEW `__PROJECT__.authorized.gold_sales_forecast` AS
+SELECT * FROM `__PROJECT__.gold.gold_sales_forecast`;

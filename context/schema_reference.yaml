@@ -2,7 +2,7 @@
 #
 # The full semantic layer: every table/view the SQL agent is allowed to
 # query (see agents/guardrails.py ALLOWED_TABLES -- this file and that
-# allow-list must name the same 18 objects), with grain, columns, keys and
+# allow-list must name the same 19 objects), with grain, columns, keys and
 # join hints. This is what lets the agent write a correct join without
 # guessing a column name. gold_dq_summary is deliberately NOT listed here
 # (or in the allow-list) -- it's an internal reconciliation table, not a
@@ -15,13 +15,11 @@
 # so a bare table name resolves correctly without the model needing to
 # know the project id at all.
 #
-# 18 objects for now -- a 19th, gold_sales_forecast, will be added here
-# (and to guardrails.py's allow-list, and to metric_specs.yaml /
-# example_questions.yaml) once GCP Phase 6 (forecasting) actually builds
-# that table. Referencing an object that doesn't exist yet would just
-# fail at execution with a "not found" error rather than a guardrail
-# rejection -- better to keep the agent's world matching what's actually
-# built.
+# 19 objects -- gold_sales_forecast (Phase 6) is the newest, listed under
+# curated_views below. It carries both history and a 6-month-ahead
+# forecast in one table (metric x month grain, an is_forecast flag) --
+# see its notes for how to tell the two apart and why gold_monthly_kpis
+# stays the fresher source for anything already known.
 
 dimensions:
   dim_customer:
@@ -162,6 +160,18 @@ curated_views:
     grain: "1 row per supplier"
     columns: [supplier_id, po_count, avg_actual_lead_time_days, pct_late, supplier_name, stated_avg_lead_time_days, reliability_score]
     notes: "All-time aggregate, not date-filterable as-is -- a 'last two quarters' question needs a direct fct_purchase_order_lines query filtered by order_date/received_date instead of this view."
+
+  gold_sales_forecast:
+    grain: "1 row per metric x month -- 'revenue_usd' and 'order_count', history plus a 6-month-ahead forecast"
+    columns: [metric, month_date, value, lower_bound, upper_bound, is_forecast, generated_at]
+    notes: >
+      is_forecast = false rows are history (excludes the current
+      in-progress calendar month -- gold_monthly_kpis stays the fresher
+      source for that); is_forecast = true rows are the forward-looking
+      forecast, with lower_bound/upper_bound as a 90% prediction interval
+      (NULL on history rows). Always disclose the range on a forecast
+      answer, never just the point value -- see
+      metric_specs.yaml's revenue_forecast_usd/order_count_forecast.
 
 excluded_from_agent_access:
   - gold_dq_summary  # internal reconciliation table -- see business_glossary.yaml rules
