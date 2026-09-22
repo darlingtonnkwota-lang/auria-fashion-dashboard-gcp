@@ -72,22 +72,9 @@ _SQL_FENCE_RE = re.compile(r"```(?:sql)?\s*(.*?)```", re.IGNORECASE | re.DOTALL)
 _RATIONALE_FALLBACK = "(tool-calling unavailable or unused; SQL extracted from a code block)"
 
 
-def draft_sql(question: str, filters: dict | None = None, history: list | None = None) -> dict:
-    """Returns {"sql": ..., "rationale": ...}."""
-    system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
-        context_block=context.build_sql_agent_context()
-    )
-
-    user_content = question
-    if filters:
-        user_content += (
-            "\n\nActive dashboard filters (apply these as additional WHERE "
-            f"conditions): {filters}"
-        )
-
-    input_items = list(history) if history else []
-    input_items.append(llm_client.text_input("user", user_content))
-
+def _one_attempt(input_items: list, system_prompt: str) -> dict | None:
+    """One draft attempt. Returns {"sql", "rationale"} or None if this
+    attempt didn't yield a usable query (caller decides whether to retry)."""
     # Same defensive fallback as the Databricks build: try tool-calling
     # first, and if the model/endpoint rejects the `tools` param for any
     # reason, fall back to a prompt-only request and parse a fenced SQL
@@ -104,16 +91,55 @@ def draft_sql(question: str, filters: dict | None = None, history: list | None =
         call = llm_client.extract_function_call(response, name="propose_sql")
         if call:
             _, args = call
-            return {"sql": args["sql"].strip(), "rationale": args.get("rationale", "").strip()}
+            sql = (args.get("sql") or "").strip()
+            if sql:
+                return {"sql": sql, "rationale": (args.get("rationale") or "").strip()}
         content = llm_client.extract_text(response)
     except Exception:  # noqa: BLE001 -- deliberately broad: any tool-calling failure falls back
-        response = llm_client.respond(
-            input_items, instructions=system_prompt, max_output_tokens=1500
-        )
-        content = llm_client.extract_text(response)
+        try:
+            response = llm_client.respond(
+                input_items, instructions=system_prompt, max_output_tokens=1500
+            )
+            content = llm_client.extract_text(response)
+        except Exception:  # noqa: BLE001 -- both attempts failed; let the caller retry
+            return None
 
     match = _SQL_FENCE_RE.search(content)
     if match:
         return {"sql": match.group(1).strip(), "rationale": _RATIONALE_FALLBACK}
+    return None
 
-    raise ValueError(f"SQL agent did not produce a usable query. Raw response: {content}")
+
+def draft_sql(question: str, filters: dict | None = None, history: list | None = None) -> dict:
+    """Returns {"sql": ..., "rationale": ...}.
+
+    Occasionally an LLM call comes back with neither a tool call nor any
+    text at all (a transient generation quirk, not a code bug) -- worth
+    one retry before giving up, since retrying resolves it most of the
+    time. Raises ValueError only if every attempt fails; orchestrator.py
+    catches that and turns it into a disclosed rejection instead of
+    crashing the whole pipeline."""
+    system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
+        context_block=context.build_sql_agent_context()
+    )
+
+    user_content = question
+    if filters:
+        user_content += (
+            "\n\nActive dashboard filters (apply these as additional WHERE "
+            f"conditions): {filters}"
+        )
+
+    input_items = list(history) if history else []
+    input_items.append(llm_client.text_input("user", user_content))
+
+    attempts = 2
+    for attempt in range(attempts):
+        result = _one_attempt(input_items, system_prompt)
+        if result:
+            return result
+
+    raise ValueError(
+        f"SQL agent did not produce a usable query after {attempts} attempt(s) "
+        f"for question: {question!r}"
+    )

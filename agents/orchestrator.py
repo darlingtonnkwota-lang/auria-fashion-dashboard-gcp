@@ -8,8 +8,12 @@
 # still its own module with a single responsibility, so the boundary is
 # real in the code even though it isn't a network boundary.
 #
-# Ported unchanged from the Databricks build's agents/orchestrator.py --
-# executor-agnostic, so it needed zero changes for the GCP port.
+# Ported from the Databricks build's agents/orchestrator.py --
+# executor-agnostic, so the pipeline shape needed zero changes for the
+# GCP port. The one addition (not in the Databricks version): a
+# try/except around sql_agent.draft_sql so a still-failing LLM draft
+# degrades into a disclosed rejection instead of crashing the whole
+# batch -- see the docstring below for why.
 # `executor` is a BigQueryExecutor (agents/executors.py); this module
 # never touches BigQuery directly.
 
@@ -25,8 +29,33 @@ def answer_question(
     the drafted SQL and rationale, whether it was rejected (and why), the
     raw result rows/columns (for a table or chart), and the final
     natural-language answer.
+
+    Every downstream step (validation_agent.execute_sql, guardrails.*) is
+    already designed to never raise -- a bad or out-of-scope query comes
+    back as a disclosed rejection, not a crash. sql_agent.draft_sql is the
+    one exception: it can still raise if the LLM call itself never
+    produces a usable query (it retries once internally first). Catching
+    that here keeps the same "always disclose, never crash" contract end
+    to end, instead of letting one bad draft take down a whole batch of
+    questions.
     """
-    draft = sql_agent.draft_sql(question, filters=filters, history=history)
+    try:
+        draft = sql_agent.draft_sql(question, filters=filters, history=history)
+    except Exception as exc:  # noqa: BLE001 -- surfaced as a disclosed rejection, not a crash
+        execution_result = {"ok": False, "error": f"SQL agent failed to draft a query: {exc}"}
+        insight = insight_agent.explain(question, "", "(no SQL drafted)", execution_result)
+        return {
+            "question": question,
+            "filters": filters or {},
+            "sql": "",
+            "sql_rationale": "(no SQL drafted)",
+            "rejected": True,
+            "rejection_reason": execution_result["error"],
+            "rows": [],
+            "columns": [],
+            "answer": insight["answer"],
+        }
+
     execution_result = validation_agent.execute_sql(executor, draft["sql"])
     insight = insight_agent.explain(
         question, draft["sql"], draft["rationale"], execution_result
