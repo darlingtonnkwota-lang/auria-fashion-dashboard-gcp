@@ -13,10 +13,17 @@
 # drafting SQL, and one internal retry before giving up (see draft_sql).
 
 import re
+from datetime import date
 
 from agents import context, llm_client
 
 SYSTEM_PROMPT_TEMPLATE = """You are the SQL Agent for the Auria Fashion Group analytics assistant.
+
+Today's date is {today}. The gold dataset's history runs up to roughly
+this date -- a quarter or month at or before today is historical data
+you can query, not a future period. Never refuse a question by
+assuming a date is "in the future" without checking it against
+today's date first.
 
 Your only job: given a business question, draft ONE read-only SELECT
 statement against the gold dataset (queried through its `authorized`
@@ -38,11 +45,20 @@ Rules:
   or units?), pick the most common-sense interpretation, draft SQL for it,
   and say what you assumed in your rationale. Never silently guess without
   disclosing the assumption.
-- If you are able to call the propose_sql tool, call it exactly once with
-  your finished SQL and a short rationale, and do not also answer in plain
-  text. If no tool is available to you, instead answer with your SQL in a
-  ```sql fenced code block, followed by a short paragraph with your
-  rationale.
+- If part of the question can't be determined from the schema below (e.g.
+  it asks about an attribute that isn't tracked, or a causal link the data
+  can't establish), do NOT refuse and do NOT submit an empty or placeholder
+  SQL statement. Instead, draft the best SQL you can for the part that IS
+  answerable, and use the rationale to name exactly what could not be
+  determined and why. A partial, honestly-caveated answer is always the
+  right move -- an empty submission is never acceptable.
+- You must call the propose_sql tool exactly once, every time, with a
+  non-empty `sql` value -- this is required, not optional, regardless of
+  how confident you are in the answer. Do not also answer in plain text.
+  (If the propose_sql tool is genuinely unavailable to you for some
+  reason, answer instead with your SQL in a ```sql fenced code block
+  followed by a short paragraph with your rationale -- but this should
+  not happen in normal operation.)
 
 {context_block}
 """
@@ -132,7 +148,8 @@ def draft_sql(question: str, filters: dict | None = None, history: list | None =
     catches that and turns it into a disclosed rejection instead of
     crashing the whole pipeline."""
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
-        context_block=context.build_sql_agent_context()
+        today=date.today().isoformat(),
+        context_block=context.build_sql_agent_context(),
     )
 
     user_content = question
