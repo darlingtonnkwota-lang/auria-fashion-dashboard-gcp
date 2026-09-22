@@ -63,10 +63,14 @@ def explain(question: str, sql: str, rationale: str, execution_result: dict) -> 
             "without fabricating a result."
         )
 
+    # 2000, not 800: Gemini 2.5 Flash's internal "thinking" tokens count
+    # against max_output_tokens (see agents/sql_agent.py's _one_attempt
+    # for the full explanation and source links), so a tight ceiling
+    # risks the same empty-response failure here as it caused there.
     response = llm_client.respond(
         [llm_client.text_input("user", user_content)],
         instructions=system_prompt,
-        max_output_tokens=800,
+        max_output_tokens=2000,
     )
     answer = llm_client.extract_text(response)
 

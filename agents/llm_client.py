@@ -100,17 +100,58 @@ def extract_text(response) -> str:
 
 
 def extract_function_call(response, name: str | None = None):
-    """Returns (call_name, arguments_dict) for the first function call in
-    the response (optionally filtered to a specific tool name), or None if
-    the model didn't call one."""
+    """Returns (call_name, arguments_dict) for a function call in the
+    response, or None if the model didn't call one.
+
+    Matches by name when given, but falls back to "the one function call
+    present" if no part's name matches -- with only one tool ever
+    declared (see sql_agent.PROPOSE_SQL_TOOL), a name mismatch here would
+    otherwise silently look identical to "no call happened at all",
+    which is exactly the failure mode this is guarding against."""
     candidates = getattr(response, "candidates", None) or []
     if not candidates:
         return None
     content = getattr(candidates[0], "content", None)
     parts = getattr(content, "parts", None) or []
-    for part in parts:
-        call = getattr(part, "function_call", None)
-        if call and (name is None or call.name == name):
+    calls = [getattr(part, "function_call", None) for part in parts]
+    calls = [c for c in calls if c is not None]
+
+    for call in calls:
+        if name is None or call.name == name:
             args = dict(call.args) if call.args else {}
             return call.name, args
+
+    if len(calls) == 1:
+        call = calls[0]
+        args = dict(call.args) if call.args else {}
+        return call.name, args
+
     return None
+
+
+def debug_describe(response) -> str:
+    """One-line diagnostic summary of a response's shape, for logging when
+    extract_function_call/extract_text come back empty despite tools
+    being forced -- so a failure is diagnosable from the caller's print
+    output instead of a guess."""
+    try:
+        candidates = getattr(response, "candidates", None) or []
+        if not candidates:
+            return "no candidates"
+        cand = candidates[0]
+        finish_reason = getattr(cand, "finish_reason", None)
+        content = getattr(cand, "content", None)
+        parts = getattr(content, "parts", None) or []
+        part_descriptions = []
+        for part in parts:
+            fc = getattr(part, "function_call", None)
+            if fc is not None:
+                part_descriptions.append(
+                    f"function_call(name={fc.name!r}, args_keys={list(dict(fc.args or {}).keys())})"
+                )
+                continue
+            text = getattr(part, "text", None)
+            part_descriptions.append(f"text(len={len(text) if text else 0})")
+        return f"finish_reason={finish_reason} parts=[{', '.join(part_descriptions) or 'none'}]"
+    except Exception as exc:  # noqa: BLE001 -- this is diagnostic code; never let it crash the caller
+        return f"(debug_describe itself failed: {exc})"

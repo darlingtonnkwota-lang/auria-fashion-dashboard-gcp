@@ -87,11 +87,16 @@ def main() -> int:
     executor = BigQueryExecutor(client=client)
 
     print("### 1. Sanity-check the Gemini endpoint before running the full pipeline\n")
+    # 50, not 10: Gemini 2.5 Flash's internal "thinking" tokens count
+    # against max_output_tokens, so a 10-token ceiling was silently
+    # consumed entirely by thinking before this ever printed "OK" --
+    # see agents/sql_agent.py's _one_attempt for the full explanation.
     sanity = llm_client.respond(
         [llm_client.text_input("user", "Reply with exactly the word OK.")],
-        max_output_tokens=10,
+        max_output_tokens=50,
     )
-    print(llm_client.extract_text(sanity))
+    sanity_text = llm_client.extract_text(sanity)
+    print(sanity_text or f"(empty response -- {llm_client.debug_describe(sanity)})")
     print()
 
     print("### 2. Run the 5 demo questions end to end\n")

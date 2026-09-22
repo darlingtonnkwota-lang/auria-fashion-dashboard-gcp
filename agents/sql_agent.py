@@ -13,6 +13,7 @@
 # drafting SQL, and one internal retry before giving up (see draft_sql).
 
 import re
+import sys
 from datetime import date
 
 from agents import context, llm_client
@@ -105,16 +106,18 @@ def _one_attempt(input_items: list, system_prompt: str) -> dict | None:
             tools=[PROPOSE_SQL_TOOL],
             # "required" (Gemini's ANY mode), not "auto": with auto, Gemini
             # sometimes opts out of calling propose_sql entirely and answers
-            # in plain prose explaining a data-model limitation instead --
-            # e.g. for "is the return rate concentrated by region or size"
-            # or "did lead time contribute to stockouts", it would rather
-            # explain the gap than draft its best-effort SQL and disclose
-            # the assumption, even though the system prompt asks for
-            # exactly that. Forcing the call removes that escape hatch; a
-            # genuinely bad/out-of-scope draft still gets caught downstream
-            # by the guardrail layer, so nothing unsafe slips through.
+            # in plain prose instead of drafting best-effort SQL.
             tool_choice="required",
-            max_output_tokens=1500,
+            # 8192, not 1500: confirmed root cause of the empty-response
+            # failures on the harder demo questions -- Gemini 2.5 Flash's
+            # internal "thinking" tokens count against max_output_tokens,
+            # and on Vertex AI, thinking_budget=0 is unreliably honored
+            # once `tools` is present (a known SDK/API limitation, not
+            # something client code can reliably work around), so a low
+            # ceiling here just means thinking silently eats the whole
+            # budget before the model ever emits the function call. A
+            # generous ceiling is the safety net.
+            max_output_tokens=8192,
         )
         call = llm_client.extract_function_call(response, name="propose_sql")
         if call:
@@ -123,10 +126,17 @@ def _one_attempt(input_items: list, system_prompt: str) -> dict | None:
             if sql:
                 return {"sql": sql, "rationale": (args.get("rationale") or "").strip()}
         content = llm_client.extract_text(response)
-    except Exception:  # noqa: BLE001 -- deliberately broad: any tool-calling failure falls back
+        if not content:
+            print(
+                f"[sql_agent] tool-forced call produced no usable SQL and no text -- "
+                f"{llm_client.debug_describe(response)}",
+                file=sys.stderr,
+            )
+    except Exception as exc:  # noqa: BLE001 -- deliberately broad: any tool-calling failure falls back
+        print(f"[sql_agent] tool-forced call raised {exc!r}, falling back", file=sys.stderr)
         try:
             response = llm_client.respond(
-                input_items, instructions=system_prompt, max_output_tokens=1500
+                input_items, instructions=system_prompt, max_output_tokens=8192
             )
             content = llm_client.extract_text(response)
         except Exception:  # noqa: BLE001 -- both attempts failed; let the caller retry
