@@ -458,12 +458,43 @@ table.data-table tbody tr:hover {
   border-radius: 14px 14px 0 0;
 }
 
+.chat-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
 .chat-header h2 {
   margin: 0;
   font-size: 1.02rem;
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.chat-clear-btn {
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 4px 11px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+
+.chat-clear-btn:hover:not(:disabled) {
+  border-color: var(--accent-pink);
+  color: #f4d6e6;
+  background: rgba(236, 72, 153, 0.12);
+}
+
+.chat-clear-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .chat-header-icon {

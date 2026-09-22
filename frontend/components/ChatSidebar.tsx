@@ -139,10 +139,29 @@ export default function ChatSidebar({ filters }: ChatSidebarProps) {
 
   const activeFilters = activeFilterEntries(filters);
 
+  function clearChat() {
+    if (busy) return;
+    setMessages([]);
+    setInput("");
+  }
+
   return (
     <div className="chat-sidebar">
       <div className="chat-header">
-        <h2><span className="chat-header-icon">✦</span> Ask a question</h2>
+        <div className="chat-header-row">
+          <h2><span className="chat-header-icon">✦</span> Ask a question</h2>
+          {messages.length > 0 && (
+            <button
+              type="button"
+              className="chat-clear-btn"
+              onClick={clearChat}
+              disabled={busy}
+              title="Clear chat"
+            >
+              Clear chat
+            </button>
+          )}
+        </div>
         {activeFilters.length > 0 && (
           <div className="chat-active-filters">
             Filtered to:{" "}
