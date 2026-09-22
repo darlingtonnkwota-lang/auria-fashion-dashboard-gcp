@@ -1,0 +1,132 @@
+# Business Glossary -- Auria Fashion Group (GCP build)
+#
+# The version-controlled "knowledge catalog" layer of the context stack
+# (Bronze/Silver/Gold lineage -> this glossary -> metric_specs.yaml's
+# semantic layer -> each agent's own scoped contract). Every term an agent
+# or a human dashboard user might use in a question is defined here once,
+# so "revenue" or "YTD" always means the same thing no matter who asks.
+#
+# Identical business definitions to the Databricks build's
+# context/business_glossary.yaml on purpose -- these are business rules,
+# not platform-specific ones, and the whole point of this GCP rebuild is
+# proving the same governed-agent pattern survives a platform swap.
+#
+# This file is read by agents/context.py and folded into the SQL agent's
+# and insight agent's system prompts verbatim -- edit it to change what
+# the agents believe these words mean. It is data, not code: nothing here
+# is executed, only read.
+
+terms:
+  Revenue:
+    definition: >
+      Net sales value in USD, Completed orders only. SUM(line_net_amount_usd)
+      from fct_order_items, filtered to order_status = 'Completed'.
+      Cancelled orders are excluded from every revenue figure by default.
+    caveat: >
+      fct_order_items keeps Cancelled order lines too (for cancellation-rate
+      analysis) -- never aggregate that fact without the status filter unless
+      the question is specifically about cancellations.
+
+  AOV:
+    definition: >
+      Average Order Value = Revenue / distinct Completed order_count over the
+      same period. Always compute as a ratio of the two summed figures, never
+      as an average of per-order values (a straight AVG() would weight every
+      order equally regardless of size, which is not what AOV means here).
+
+  Margin:
+    definition: >
+      line_margin_usd = line_net_amount_usd - line_cogs_usd, summed per
+      period/dimension. Margin % = margin_usd / revenue_usd * 100.
+    caveat: >
+      line_cogs_usd uses each product's CURRENT unit_cost_usd (from
+      dim_product), not the cost that was actually in effect on the order's
+      date -- there is no cost-history table. If a product's cost changed
+      over the dataset's window, older orders' margin will be slightly off.
+      Disclose this caveat whenever a question asks about historical margin
+      trends specifically (it will not usually matter for a single recent
+      period).
+
+  Return rate:
+    definition: >
+      Two valid forms depending on the question -- pick based on what's
+      asked, and say which one you used:
+        - Unit/line rate: return_count / lines_sold (from
+          gold_returns_by_product_monthly), i.e. "what fraction of sold
+          lines came back."
+        - Dollar rate: returns_usd / revenue_usd (from gold_monthly_kpis),
+          i.e. "what fraction of revenue was refunded."
+
+  YTD (year-to-date):
+    definition: >
+      Every year's total through the SAME day-of-year cutoff, not through
+      "today" for past years and a partial year for the current one. See
+      gold_ytd_by_year.cutoff_doy: it is the latest day-of-year that
+      actually has a Completed order in the most recent year present in the
+      data, and every other year in that table is summed through that same
+      day-of-year. Never assume the cutoff equals today's calendar date --
+      always read cutoff_doy from the data, it can differ by a day or two
+      depending on when the last Completed order landed.
+
+  Region:
+    definition: >
+      Always the CUSTOMER's home region (dim_customer.region /
+      fct_order_items.customer_region), never the fulfilling store's or
+      warehouse's region. This is a deliberate single rule so Online orders
+      (which have no store at all) and In-Store orders report "region"
+      consistently. Store/warehouse region is a different, separate
+      attribute (dim_store.region, dim_warehouse.region) -- only use those
+      when a question is specifically about store or warehouse geography,
+      not customer geography.
+
+  Channel:
+    definition: >
+      orders.channel: "Online" or "In-Store". fct_order_items.channel
+      carries this through to line grain.
+
+  Completed vs Cancelled:
+    definition: >
+      order_status on fct_order_items / dim-joined orders. "Completed" is
+      the default filter for any revenue/margin/AOV/units question. A
+      question explicitly about cancellations (rate, count, trend) is the
+      only case where Cancelled rows should be included/aggregated.
+
+  Currency:
+    definition: >
+      All amounts in Gold ending in _usd are already consolidated to USD --
+      never re-apply an exchange rate to a _usd column. The *_local columns
+      still on fct_order_items/fct_returns are the original transaction
+      currency and should not be summed across currencies.
+
+  Lifetime value / repeat customer:
+    definition: >
+      Not a precomputed Gold column -- gold_top_customers_monthly is
+      monthly grain. "Lifetime spend" or "repeat vs one-time" questions
+      need a query directly against fct_order_items (filtered to
+      order_status='Completed') grouped by customer_id with no date
+      filter, using COUNT(DISTINCT order_id) to classify repeat (>1) vs
+      one-time (=1) buyers.
+
+  Stockout:
+    definition: >
+      fct_inventory_snapshots.stockout_flag = true means the running stock
+      ledger for that product/warehouse/month dipped to zero or below at
+      some point during the month. Grain is product x warehouse x month --
+      there is no daily inventory grain in Gold.
+
+  Lead time / on-time rate:
+    definition: >
+      gold_supplier_performance.avg_actual_lead_time_days is the measured
+      average across a supplier's received POs (DATE_DIFF(received_date,
+      order_date, DAY)); pct_late is the share of that supplier's POs with
+      status = 'Received (Late)'. stated_avg_lead_time_days (from
+      dim_supplier.avg_lead_time_days) is the supplier's own quoted
+      figure -- compare the two when a question asks whether a supplier is
+      meeting its stated lead time.
+
+rules:
+  - "Every revenue/AOV/margin/units figure defaults to order_status = 'Completed' unless the question is explicitly about cancellations."
+  - "Region always means the customer's home region unless the question names store or warehouse geography specifically."
+  - "Never re-convert a column already suffixed _usd."
+  - "gold_dq_summary is an internal reconciliation table, not a reporting object -- never query it to answer a business question."
+  - "Prefer a curated gold_* view when one already answers the question at the right grain; only join fct_*/dim_* tables directly when no curated view covers it."

@@ -1,0 +1,118 @@
+# The Validation/Execution agent's guardrail layer -- the "governed,
+# auditable, read-only" boundary from gcp_strategy.md section 4. Before
+# any SQL Agent-drafted query touches real data, it is:
+#
+#   1. checked against a real BigQuery SQL function
+#      (pipelines/governance/sql/01_validate_gold_sql.sql), so the check
+#      itself is an auditable object with its own job history entry --
+#      not just an in-process Python `if` that anyone importing this
+#      module directly could bypass -- then
+#   2. capped at a hard row limit and a wall-clock timeout before it's
+#      allowed to execute at all.
+#
+# Direct port of the Databricks build's agents/guardrails.py: same
+# constants, same two functions, same GuardrailRejected exception --
+# only the underlying calls change (a BigQuery Client instead of a
+# SparkSession).
+#
+# Known limitation for this POC, documented on purpose rather than
+# missed (same limitation the Databricks build named): validate_gold_sql
+# uses regex checks, not a real SQL parser, and this code runs under the
+# calling user's own gcloud identity rather than a dedicated read-only
+# service account scoped to SELECT-only grants on the `authorized`
+# dataset. A production build would do both properly -- a real SQL
+# parser (e.g. sqlglot) for the table/keyword checks, and a service
+# account whose IAM grants do the actual enforcement, so a compromised or
+# buggy agent literally cannot act outside its allow-list no matter what
+# Python code runs. For a demo dataset with no sensitive data and no
+# write path anywhere in Gold, the regex + row-limit + timeout
+# combination below is enough to prove the pattern end to end.
+
+import concurrent.futures
+
+from google.cloud import bigquery
+
+DATASET = "gold"
+AUTHORIZED_DATASET = "authorized"
+MAX_ROWS = 500
+TIMEOUT_SECONDS = 30
+
+# Kept here as the human-readable mirror of
+# pipelines/governance/sql/02_authorized_views.sql and
+# context/schema_reference.yaml's object list -- not read by
+# validate_gold_sql itself (that function only checks dataset/keyword
+# patterns, not this exact set), but used by callers/tests that want to
+# sanity-check a query's tables before even calling the BigQuery
+# function. 18 objects -- gold_sales_forecast will be added once GCP
+# Phase 6 (forecasting) builds that table.
+ALLOWED_TABLES = {
+    "dim_customer",
+    "dim_product",
+    "dim_supplier",
+    "dim_store",
+    "dim_warehouse",
+    "dim_promotion",
+    "dim_date",
+    "fct_order_items",
+    "fct_returns",
+    "fct_purchase_order_lines",
+    "fct_inventory_snapshots",
+    "gold_monthly_kpis",
+    "gold_ytd_by_year",
+    "gold_top_products_monthly",
+    "gold_top_customers_monthly",
+    "gold_returns_by_product_monthly",
+    "gold_channel_performance",
+    "gold_supplier_performance",
+}
+
+
+class GuardrailRejected(Exception):
+    """Raised when the BigQuery validation function rejects a query, or a
+    query exceeds the row/timeout guardrails."""
+
+
+def validate(client: bigquery.Client, sql_text: str) -> None:
+    """Calls <project>.gold.validate_gold_sql. Raises GuardrailRejected if
+    it returns anything other than 'OK'."""
+    escaped = sql_text.replace("'", "\\'")
+    verdict_sql = f"SELECT `{client.project}.{DATASET}.validate_gold_sql`('{escaped}') AS verdict"
+    rows = list(client.query(verdict_sql).result())
+    verdict = rows[0]["verdict"]
+    if verdict != "OK":
+        raise GuardrailRejected(verdict)
+
+
+def execute(client: bigquery.Client, sql_text: str):
+    """Validate, then run sql_text with a row cap and a wall-clock timeout,
+    with the default dataset pinned to `authorized` (BigQuery's version
+    of the Databricks build's catalog/schema pinning) so the SQL agent's
+    unqualified table names resolve correctly. Returns
+    (rows_as_list_of_dicts, columns). Raises GuardrailRejected on any
+    failure -- validation_agent.py turns that into a message the insight
+    agent can explain to the user, rather than letting an exception
+    bubble up as a crash."""
+    validate(client, sql_text)
+
+    capped_sql = f"SELECT * FROM ({sql_text.rstrip(';')}) AS agent_query LIMIT {MAX_ROWS}"
+    job_config = bigquery.QueryJobConfig(
+        default_dataset=f"{client.project}.{AUTHORIZED_DATASET}"
+    )
+
+    def _run():
+        query_job = client.query(capped_sql, job_config=job_config)
+        result_iter = query_job.result(timeout=TIMEOUT_SECONDS)
+        columns = [field.name for field in result_iter.schema]
+        rows = [dict(row.items()) for row in result_iter]
+        return rows, columns
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(_run)
+        try:
+            return future.result(timeout=TIMEOUT_SECONDS)
+        except concurrent.futures.TimeoutError:
+            raise GuardrailRejected(
+                f"Query exceeded the {TIMEOUT_SECONDS}s guardrail timeout and was cancelled."
+            )
+        except Exception as exc:  # noqa: BLE001 -- surfaced to the caller either way
+            raise GuardrailRejected(f"Query failed: {exc}") from exc

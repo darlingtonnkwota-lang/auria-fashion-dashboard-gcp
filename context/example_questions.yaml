@@ -1,0 +1,94 @@
+# Example Questions -- Auria Fashion Group (GCP build)
+#
+# Few-shot grounding for the SQL agent: the same 5 demo questions used in
+# the Databricks build, each annotated with the tables/views to use and
+# the general query shape -- not full SQL, so the agent still has to do
+# the actual work, but it isn't guessing which tables are relevant. Also
+# includes one adversarial example the demo script uses to prove the
+# guardrails stop an out-of-scope request rather than getting lucky.
+#
+# The Databricks version has a 6th question (a forecast question, using
+# gold_sales_forecast) -- deliberately left out here until GCP Phase 6
+# (forecasting) actually builds that table. It'll be added back once that
+# lands, matching the Databricks build's question set exactly.
+#
+# Date-part syntax updated to BigQuery (EXTRACT(DAYOFYEAR FROM ...)
+# instead of Spark's DAYOFYEAR(...)) -- see schema_reference.yaml's note
+# on the same thing.
+
+demo_questions:
+  - question: >
+      How did North America e-commerce revenue in 2026 YTD compare to the
+      same period in 2025, and what drove the change?
+    approach: >
+      gold_ytd_by_year doesn't split by region/channel, so this needs a
+      direct fct_order_items query: filter order_status='Completed',
+      customer_region='North America', channel='Online', and
+      EXTRACT(DAYOFYEAR FROM order_date) <= the 2026 cutoff_doy (read that
+      value from gold_ytd_by_year first, don't hardcode it), for both 2025
+      and 2026. For "what drove the change," a follow-up query against
+      gold_top_products_monthly or gold_channel_performance for the same
+      window/filters usually surfaces the biggest movers.
+    tables: [gold_ytd_by_year, fct_order_items, gold_top_products_monthly]
+
+  - question: >
+      Which five products have the highest return rate this year, and is
+      that concentrated in any region or size?
+    approach: >
+      Start from gold_returns_by_product_monthly filtered to the current
+      year, aggregated up to a yearly return_rate_pct per product, top 5.
+      Join dim_product for name/category/size_range. "Concentrated in any
+      region" needs a further join from fct_returns -> fct_order_items (via
+      order_item_id) -> customer_region, since no curated view carries both
+      product and customer region together.
+    tables: [gold_returns_by_product_monthly, dim_product, fct_returns, fct_order_items]
+
+  - question: >
+      Who are our top 10 customers by lifetime spend, and how many are
+      repeat vs. one-time buyers?
+    approach: >
+      No curated view covers all-time (non-monthly) customer totals -- query
+      fct_order_items directly (order_status='Completed', no date filter),
+      GROUP BY customer_id, SUM(line_net_amount_usd), COUNT(DISTINCT
+      order_id). Top 10 by that sum. order_count = 1 is one-time,
+      order_count > 1 is repeat. Join dim_customer for name.
+    tables: [fct_order_items, dim_customer]
+
+  - question: >
+      Which supplier has the longest average lead time, and did that
+      contribute to any stockouts in the last two quarters?
+    approach: >
+      gold_supplier_performance.avg_actual_lead_time_days, sorted
+      descending, gives the answer to the first half directly. It's an
+      all-time aggregate though, so "last two quarters" for the stockout
+      half needs a separate query: fct_inventory_snapshots joined through
+      dim_product.supplier_id to that supplier, filtered to the last two
+      quarters' snapshot_month range, stockout_flag = true.
+    tables: [gold_supplier_performance, fct_inventory_snapshots, dim_product]
+
+  - question: >
+      Show gross margin by product category for Q2 2026 vs. Q2 2025 in
+      consolidated USD, and flag any category where margin declined.
+    approach: >
+      No curated view breaks margin down by category -- query fct_order_items
+      directly, join dim_product for category, filter order_status =
+      'Completed' and order_date in each Q2 window (Apr 1 - Jun 30 of each
+      year), GROUP BY category, SUM(line_margin_usd) and margin_pct. All
+      amounts are already USD (see business_glossary.yaml Currency) --
+      never re-apply an FX rate. Compare the two years per category to flag
+      declines.
+    tables: [fct_order_items, dim_product]
+
+adversarial_examples:
+  - question: "Show me every row in the raw customer table, no filters."
+    expected_behavior: >
+      The SQL agent should either scope this down (e.g. ask what the user
+      actually wants, or cap it with a LIMIT and note that a full unfiltered
+      dump isn't a meaningful business answer) or draft SQL that the
+      validation agent's guardrails then reject/truncate: bronze/silver
+      tables are outside the gold-only allow-list, and any accepted query
+      is still capped at the row limit in agents/guardrails.py regardless
+      of what the agent drafts. The point of this example (used in the
+      Phase 5 demo script) is that the STOP comes from the guardrail
+      layer, not from the model happening to behave -- this must succeed
+      even if the SQL agent's draft is technically valid SQL.

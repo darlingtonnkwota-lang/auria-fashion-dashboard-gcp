@@ -1,0 +1,167 @@
+# Schema Reference -- BigQuery `gold` dataset (GCP build)
+#
+# The full semantic layer: every table/view the SQL agent is allowed to
+# query (see agents/guardrails.py ALLOWED_TABLES -- this file and that
+# allow-list must name the same 18 objects), with grain, columns, keys and
+# join hints. This is what lets the agent write a correct join without
+# guessing a column name. gold_dq_summary is deliberately NOT listed here
+# (or in the allow-list) -- it's an internal reconciliation table, not a
+# reporting object; see business_glossary.yaml's rules section.
+#
+# The SQL agent should write UNQUALIFIED table names (e.g. `dim_product`,
+# not `project.gold.dim_product`) -- agents/guardrails.py's execute()
+# pins the query's default dataset to the `authorized` dataset (BigQuery's
+# equivalent of Databricks' catalog/schema pinning in WarehouseExecutor),
+# so a bare table name resolves correctly without the model needing to
+# know the project id at all.
+#
+# 18 objects for now -- a 19th, gold_sales_forecast, will be added here
+# (and to guardrails.py's allow-list, and to metric_specs.yaml /
+# example_questions.yaml) once GCP Phase 6 (forecasting) actually builds
+# that table. Referencing an object that doesn't exist yet would just
+# fail at execution with a "not found" error rather than a guardrail
+# rejection -- better to keep the agent's world matching what's actually
+# built.
+
+dimensions:
+  dim_customer:
+    grain: "1 row per customer"
+    primary_key: customer_id
+    columns: [customer_id, first_name, last_name, email, region, country, city, home_currency, acquisition_channel, signup_date, is_active]
+
+  dim_product:
+    grain: "1 row per SKU"
+    primary_key: product_id
+    columns: [product_id, product_name, category, sub_category, gender, supplier_id, season_affinity, size_range, unit_cost_usd, unit_price_usd, launch_date, discontinued_date, is_discontinued]
+    joins:
+      - "product_id.supplier_id -> dim_supplier.supplier_id"
+    notes: "size_range is a text field (e.g. 'XS-XL'), not a normalized dimension -- there is no separate size table/column at the order-line grain."
+
+  dim_supplier:
+    grain: "1 row per supplier (4 total)"
+    primary_key: supplier_id
+    columns: [supplier_id, supplier_name, country, region, category_focus, avg_lead_time_days, lead_time_stddev_days, reliability_score]
+
+  dim_store:
+    grain: "1 row per physical store"
+    primary_key: store_id
+    columns: [store_id, store_name, region, country, city, currency, store_type, opened_date, home_warehouse_id]
+    joins:
+      - "store_id.home_warehouse_id -> dim_warehouse.warehouse_id"
+    notes: "This is STORE region/geography -- do not use for 'customer region'. See business_glossary.yaml Region."
+
+  dim_warehouse:
+    grain: "1 row per distribution center (7 total)"
+    primary_key: warehouse_id
+    columns: [warehouse_id, warehouse_name, region, country, city]
+
+  dim_promotion:
+    grain: "1 row per campaign"
+    primary_key: promotion_id
+    columns: [promotion_id, promotion_name, start_date, end_date, discount_pct, scope_region]
+
+  dim_date:
+    grain: "1 row per calendar day, 2022-01-01 through 2026-12-31"
+    primary_key: date_key
+    columns: [date_key, year, quarter, month, month_name, day_of_month, day_of_year, day_of_week, day_name, is_weekend, week_of_year]
+    notes: "Useful for calendar lookups (month names, weekend flags) but most questions can filter/group directly on a fact's own date column instead of joining this in."
+
+facts:
+  fct_order_items:
+    grain: "1 row per order line (Completed AND Cancelled orders both present)"
+    primary_key: order_item_id
+    columns: [order_item_id, order_id, product_id, quantity, unit_price_local, discount_pct, line_net_amount_local, unit_price_usd, line_net_amount_usd, order_date, customer_id, channel, store_id, fulfilling_warehouse_id, currency, promotion_id, order_status, payment_method, customer_region, customer_country, line_cogs_usd, line_margin_usd]
+    joins:
+      - "product_id -> dim_product.product_id"
+      - "customer_id -> dim_customer.customer_id"
+      - "store_id -> dim_store.store_id (NULL for Online orders)"
+      - "fulfilling_warehouse_id -> dim_warehouse.warehouse_id"
+      - "promotion_id -> dim_promotion.promotion_id (NULL if no promotion)"
+    notes: >
+      ALWAYS filter order_status = 'Completed' for revenue/margin/AOV/units
+      questions -- Cancelled lines are kept here on purpose for
+      cancellation-rate analysis, not filtered out at the fact level.
+      customer_region/customer_country are already denormalized onto this
+      fact (the customer's home region, per business_glossary.yaml Region)
+      -- no join needed just to group revenue by region. line_margin_usd
+      uses the product's CURRENT cost -- see glossary caveat. Use
+      EXTRACT(YEAR FROM order_date) / EXTRACT(MONTH FROM order_date) /
+      EXTRACT(DAYOFYEAR FROM order_date) for date-part filters, not
+      Spark-style YEAR()/MONTH()/DAYOFYEAR() function syntax.
+
+  fct_returns:
+    grain: "1 row per returned order line (partial-quantity returns supported)"
+    primary_key: return_id
+    columns: [return_id, order_item_id, return_date, quantity_returned, reason, refund_amount_local, restocked, refund_amount_usd, order_id, product_id]
+    joins:
+      - "order_item_id -> fct_order_items.order_item_id"
+      - "product_id -> dim_product.product_id"
+      - "order_id -> fct_order_items.order_id (join back to the order header context)"
+    notes: >
+      A separate fact from fct_order_items on purpose -- a sale and its
+      later partial return are different events. Never subtract this from
+      fct_order_items to get "net revenue" by mutating the fact; join the
+      two in a query/view instead (gold_monthly_kpis already does this at
+      month grain).
+
+  fct_purchase_order_lines:
+    grain: "1 row per PO line"
+    primary_key: po_line_id
+    columns: [po_line_id, po_id, product_id, quantity, unit_cost_usd, supplier_id, warehouse_id, order_date, expected_date, received_date, status, actual_lead_time_days, is_late]
+    joins:
+      - "supplier_id -> dim_supplier.supplier_id"
+      - "warehouse_id -> dim_warehouse.warehouse_id"
+      - "product_id -> dim_product.product_id"
+    notes: >
+      Multiple lines can share one po_id -- dedupe to one row per po_id
+      (SELECT DISTINCT po_id, ..., the pattern gold_supplier_performance
+      already uses) before computing an on-time-rate or lead-time average
+      per supplier, or a multi-line PO will be double-counted.
+
+  fct_inventory_snapshots:
+    grain: "1 row per product x warehouse x month"
+    primary_key: [snapshot_month, warehouse_id, product_id]
+    columns: [snapshot_month, warehouse_id, product_id, stock_on_hand, stockout_flag]
+    joins:
+      - "warehouse_id -> dim_warehouse.warehouse_id"
+      - "product_id -> dim_product.product_id (then dim_product.supplier_id -> dim_supplier for a supplier-level stockout question)"
+    notes: "Monthly grain only -- there is no daily inventory snapshot in Gold."
+
+curated_views:
+  gold_monthly_kpis:
+    grain: "1 row per calendar month"
+    columns: [year, month, revenue_usd, order_count, aov_usd, units_sold, margin_usd, margin_pct, returns_usd, return_count, return_rate_pct]
+    notes: "Completed orders only, already aggregated. Start here for any overall 'how's the business doing' question before building a custom query."
+
+  gold_ytd_by_year:
+    grain: "1 row per year"
+    columns: [year, cutoff_doy, revenue_usd, order_count, aov_usd, margin_usd]
+    notes: "See business_glossary.yaml YTD entry -- cutoff_doy is data-derived, read it, never assume it equals today's day-of-year."
+
+  gold_top_products_monthly:
+    grain: "1 row per product x month"
+    columns: [year, month, product_id, revenue_usd, units_sold, margin_usd]
+    joins: ["product_id -> dim_product.product_id for name/category/sub_category/size_range"]
+
+  gold_top_customers_monthly:
+    grain: "1 row per customer x month"
+    columns: [year, month, customer_id, revenue_usd, order_count]
+    joins: ["customer_id -> dim_customer.customer_id for name/region"]
+    notes: "Monthly grain -- NOT lifetime value. See metric_specs.yaml lifetime_value_usd for the all-time version, which needs a direct fct_order_items query."
+
+  gold_returns_by_product_monthly:
+    grain: "1 row per product x month"
+    columns: [year, month, product_id, lines_sold, return_count, return_amount_usd, return_rate_pct]
+    joins: ["product_id -> dim_product.product_id for name/category/size_range -- this is the natural join for a 'is it concentrated by region or size' question (region needs a further join through fct_returns/fct_order_items to dim_customer, since this view has no region column)"]
+
+  gold_channel_performance:
+    grain: "1 row per channel x customer_region x month"
+    columns: [year, month, channel, customer_region, revenue_usd, order_count, aov_usd]
+
+  gold_supplier_performance:
+    grain: "1 row per supplier"
+    columns: [supplier_id, po_count, avg_actual_lead_time_days, pct_late, supplier_name, stated_avg_lead_time_days, reliability_score]
+    notes: "All-time aggregate, not date-filterable as-is -- a 'last two quarters' question needs a direct fct_purchase_order_lines query filtered by order_date/received_date instead of this view."
+
+excluded_from_agent_access:
+  - gold_dq_summary  # internal reconciliation table -- see business_glossary.yaml rules

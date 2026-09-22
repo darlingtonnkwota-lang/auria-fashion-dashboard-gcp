@@ -1,0 +1,116 @@
+# Metric Specs -- Auria Fashion Group (GCP build)
+#
+# The "semantic layer" of the context stack: one canonical SQL expression
+# per metric, so the SQL agent reuses a known-correct formula instead of
+# re-deriving it (and possibly getting it subtly wrong) on every question.
+# Table/column names here must match context/schema_reference.yaml exactly.
+#
+# Same metrics as the Databricks build's context/metric_specs.yaml, with
+# canonical_sql rewritten to BigQuery Standard SQL dialect where it
+# differs (see notes on each entry below for what actually changed and
+# why):
+#   - BigQuery has no SQL:2003 FILTER (WHERE ...) clause on aggregates
+#     (Spark SQL/Postgres do) -- every FILTER example became an IF()
+#     inside the aggregate instead.
+#   - Spark's DAYOFYEAR(date) became BigQuery's EXTRACT(DAYOFYEAR FROM date).
+#   - revenue_forecast_usd / order_count_forecast are deliberately NOT
+#     included yet -- gold_sales_forecast doesn't exist until GCP Phase 6
+#     (forecasting) lands. They'll be added back here once that table is
+#     built, matching the Databricks build's own metrics exactly.
+#
+# grain: what one row of the metric represents once grouped.
+# source: the gold table/view the canonical_sql expects to run against.
+# canonical_sql: a SQL fragment (SELECT-list expression, or full query
+#   shape for metrics that need more than one table) -- the SQL agent
+#   should reuse this expression rather than inventing an equivalent one.
+
+metrics:
+  revenue_usd:
+    grain: "per period / dimension you group by"
+    source: fct_order_items
+    canonical_sql: "SUM(IF(order_status = 'Completed', line_net_amount_usd, NULL))"
+    notes: "BigQuery has no FILTER (WHERE ...) clause on aggregates -- use IF() inside the SUM, or pre-filter WHERE order_status = 'Completed' before the SUM instead."
+
+  order_count:
+    grain: "per period / dimension you group by"
+    source: fct_order_items
+    canonical_sql: "COUNT(DISTINCT order_id)"
+    notes: "Always DISTINCT -- fct_order_items is line grain, one order has multiple lines."
+
+  aov_usd:
+    grain: "per period / dimension you group by"
+    source: fct_order_items
+    canonical_sql: "SUM(line_net_amount_usd) / COUNT(DISTINCT order_id)"
+    notes: "Ratio of sums, never AVG() of a per-line or per-order amount."
+
+  units_sold:
+    grain: "per period / dimension you group by"
+    source: fct_order_items
+    canonical_sql: "SUM(quantity)"
+
+  margin_usd:
+    grain: "per period / dimension you group by"
+    source: fct_order_items
+    canonical_sql: "SUM(line_margin_usd)"
+    notes: "line_margin_usd is precomputed on the fact -- do not recompute from unit_cost_usd unless line_margin_usd is unavailable. See glossary caveat on current-cost margin."
+
+  margin_pct:
+    grain: "per period / dimension you group by"
+    source: fct_order_items
+    canonical_sql: "SUM(line_margin_usd) / SUM(line_net_amount_usd) * 100"
+
+  return_rate_pct_by_lines:
+    grain: "per product / period"
+    source: gold_returns_by_product_monthly
+    canonical_sql: "return_count / lines_sold * 100"
+    notes: "Already precomputed as return_rate_pct in this view."
+
+  return_rate_pct_by_dollars:
+    grain: "per period"
+    source: gold_monthly_kpis
+    canonical_sql: "returns_usd / revenue_usd * 100"
+    notes: "Already precomputed as return_rate_pct in this view."
+
+  ytd_revenue_usd:
+    grain: "per year"
+    source: gold_ytd_by_year
+    canonical_sql: "revenue_usd"
+    notes: >
+      Do not recompute YTD from fct_order_items directly unless
+      gold_ytd_by_year doesn't have the breakdown you need (e.g. by
+      category) -- in that case, first read gold_ytd_by_year.cutoff_doy for
+      the year in question, then filter fct_order_items with
+      EXTRACT(DAYOFYEAR FROM order_date) <= that same cutoff_doy for every
+      year being compared. Never hardcode a cutoff day number.
+
+  lifetime_value_usd:
+    grain: "per customer, all time"
+    source: fct_order_items
+    canonical_sql: >
+      SELECT customer_id, SUM(line_net_amount_usd) AS lifetime_value_usd,
+      COUNT(DISTINCT order_id) AS order_count
+      FROM fct_order_items WHERE order_status = 'Completed'
+      GROUP BY customer_id
+    notes: "order_count = 1 is a one-time buyer; order_count > 1 is a repeat buyer. No curated view covers this -- query the fact directly, no date filter."
+
+  avg_actual_lead_time_days:
+    grain: "per supplier"
+    source: gold_supplier_performance
+    canonical_sql: "avg_actual_lead_time_days"
+    notes: "Compare against stated_avg_lead_time_days (the supplier's own quoted figure, from dim_supplier) to answer 'is this supplier meeting its own promise'."
+
+  pct_late:
+    grain: "per supplier"
+    source: gold_supplier_performance
+    canonical_sql: "pct_late"
+
+  stockout_count:
+    grain: "per supplier / product / warehouse over a date range"
+    source: fct_inventory_snapshots
+    canonical_sql: >
+      SELECT COUNT(*) FROM fct_inventory_snapshots
+      WHERE stockout_flag = true AND snapshot_month BETWEEN @start AND @end
+    notes: >
+      To tie stockouts to a supplier, join fct_inventory_snapshots.product_id
+      -> dim_product.supplier_id -> dim_supplier. No curated view does this
+      join -- build it directly against the star schema.
