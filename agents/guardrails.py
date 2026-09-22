@@ -74,10 +74,20 @@ class GuardrailRejected(Exception):
 
 def validate(client: bigquery.Client, sql_text: str) -> None:
     """Calls <project>.gold.validate_gold_sql. Raises GuardrailRejected if
-    it returns anything other than 'OK'."""
-    escaped = sql_text.replace("'", "\\'")
-    verdict_sql = f"SELECT `{client.project}.{DATASET}.validate_gold_sql`('{escaped}') AS verdict"
-    rows = list(client.query(verdict_sql).result())
+    it returns anything other than 'OK'.
+
+    Passes sql_text as a query parameter rather than splicing it into the
+    query string by hand. A hand-escaped string literal (replacing only
+    `'` with `\\'`) breaks the moment the drafted SQL is multi-line --
+    BigQuery's quoted string literals don't allow a raw embedded newline,
+    so that approach throws "Unclosed string literal" on any real,
+    multi-line agent-drafted query. A query parameter sidesteps escaping
+    entirely, for quotes, newlines, and backslashes alike."""
+    verdict_sql = f"SELECT `{client.project}.{DATASET}.validate_gold_sql`(@sql_text) AS verdict"
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[bigquery.ScalarQueryParameter("sql_text", "STRING", sql_text)]
+    )
+    rows = list(client.query(verdict_sql, job_config=job_config).result())
     verdict = rows[0]["verdict"]
     if verdict != "OK":
         raise GuardrailRejected(verdict)
