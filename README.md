@@ -4,8 +4,9 @@ This is the **GCP twin** of the Databricks-based Auria Fashion Group agentic
 dashboard (that build lives in a separate Azure DevOps repo). Same fictional
 retailer, same governed-agent architecture (Orchestrator → SQL Agent →
 Validation/Execution Agent → Insight/Viz Agent), same synthetic dataset —
-rebuilt on BigQuery + Vertex AI (Gemini) + Looker Studio instead of
-Databricks + Claude + AI/BI Dashboards.
+rebuilt on BigQuery + Vertex AI (Gemini), with a fully native in-app
+dashboard (Recharts, not an embedded BI report) instead of Databricks +
+Claude + AI/BI Dashboards.
 
 Kept as a **fully separate repo** on purpose: independent of the Azure
 DevOps repo/billing, so this build never competes with that project's
@@ -29,15 +30,20 @@ way the Databricks build's `docs/phaseN_*.md` files did.
 ## Repo layout
 
 ```
-app/          walking-skeleton FastAPI service (health check for now;
-              becomes the real backend as later phases land)
-pipelines/    Bronze/Silver/Gold BigQuery SQL + loaders
+pipelines/    Bronze/Silver/Gold/forecast BigQuery SQL + loaders
 context/      git-tracked glossary / metric specs / example questions
               (ported from the Databricks build, table refs repointed)
 agents/       orchestrator / SQL / validation / insight agent code
-frontend/     Next.js app (forked from the Databricks build's frontend,
-              repointed at this repo's backend)
+app/          FastAPI backend: Phase 5's agent pipeline over HTTP
+              (POST /api/ask) + the native dashboard's data endpoints
+              (GET /api/dashboard/*), both querying BigQuery directly
+              (Phase 7 -- was a walking-skeleton health check through Phase 6)
+frontend/     Next.js app -- a fully native dashboard (Recharts charts
+              and tables, not an embedded BI report) plus the "Ask a
+              question" chat sidebar, forked from the Databricks build's
+              frontend shell and redesigned dark/colorful (Phase 7)
 docs/         phase-by-phase setup docs, same convention as the Azure repo
 cloudbuild.yaml   one Cloud Build config, parameterized by `_ENV`
-                  (dev or prod) depending on which trigger fired it
+                  (dev or prod), building + deploying BOTH the backend
+                  and frontend as separate Cloud Run services (Phase 7)
 ```

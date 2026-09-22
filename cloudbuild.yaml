@@ -1,29 +1,42 @@
 # One Cloud Build config, parameterized by the _ENV substitution.
 # The dev trigger (branch: ^dev$) sets _ENV=dev; the prod trigger
-# (branch: ^main$) sets _ENV=prod. Same steps, different target service —
+# (branch: ^main$) sets _ENV=prod. Same steps, different target services --
 # that's what makes "merge dev into main" the actual promotion mechanism,
 # not a separate manual deploy.
+#
+# Phase 7 adds the frontend build/push/deploy steps (4-7 below) and
+# switches the backend build to a REPO-ROOT context (see app/Dockerfile's
+# header comment) so it can import agents/ and context/ directly.
+#
+# Ordering matters: the frontend's server-side API routes proxy to the
+# backend's Cloud Run URL via a runtime env var (BACKEND_URL), not a
+# build-time one -- so the backend must be deployed FIRST, its URL
+# captured (step get-backend-url), then handed to the frontend's deploy
+# step. This sidesteps the chicken-and-egg problem of not knowing a Cloud
+# Run service's URL before its first deploy.
 
 substitutions:
   _ENV: "dev"          # overridden per-trigger in the Cloud Build console
   _REGION: "us-central1"
 
 steps:
-  - id: build
+  - id: build-backend
     name: gcr.io/cloud-builders/docker
     args:
       - build
+      - -f
+      - app/Dockerfile
       - -t
       - us-central1-docker.pkg.dev/$PROJECT_ID/auria/backend-${_ENV}:$SHORT_SHA
-      - ./app
+      - .
 
-  - id: push
+  - id: push-backend
     name: gcr.io/cloud-builders/docker
     args:
       - push
       - us-central1-docker.pkg.dev/$PROJECT_ID/auria/backend-${_ENV}:$SHORT_SHA
 
-  - id: deploy
+  - id: deploy-backend
     name: gcr.io/google.com/cloudsdktool/cloud-sdk
     entrypoint: gcloud
     args:
@@ -34,10 +47,52 @@ steps:
       - --region=${_REGION}
       - --platform=managed
       - --allow-unauthenticated
+      - --set-env-vars=AURIA_GCP_PROJECT=$PROJECT_ID,AURIA_GCP_LOCATION=${_REGION}
       - --quiet
+
+  - id: get-backend-url
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        gcloud run services describe auria-backend-${_ENV} \
+          --region=${_REGION} --format='value(status.url)' > /workspace/backend_url.txt
+        echo "Backend URL: $(cat /workspace/backend_url.txt)"
+
+  - id: build-frontend
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - frontend/Dockerfile
+      - -t
+      - us-central1-docker.pkg.dev/$PROJECT_ID/auria/frontend-${_ENV}:$SHORT_SHA
+      - .
+
+  - id: push-frontend
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - us-central1-docker.pkg.dev/$PROJECT_ID/auria/frontend-${_ENV}:$SHORT_SHA
+
+  - id: deploy-frontend
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        gcloud run deploy auria-frontend-${_ENV} \
+          --image=us-central1-docker.pkg.dev/$PROJECT_ID/auria/frontend-${_ENV}:$SHORT_SHA \
+          --region=${_REGION} \
+          --platform=managed \
+          --allow-unauthenticated \
+          --set-env-vars=BACKEND_URL=$(cat /workspace/backend_url.txt) \
+          --quiet
 
 images:
   - us-central1-docker.pkg.dev/$PROJECT_ID/auria/backend-${_ENV}:$SHORT_SHA
+  - us-central1-docker.pkg.dev/$PROJECT_ID/auria/frontend-${_ENV}:$SHORT_SHA
 
 options:
   logging: CLOUD_LOGGING_ONLY
