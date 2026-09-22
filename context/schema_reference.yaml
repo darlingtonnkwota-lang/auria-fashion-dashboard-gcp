@@ -25,7 +25,17 @@ dimensions:
   dim_customer:
     grain: "1 row per customer"
     primary_key: customer_id
-    columns: [customer_id, first_name, last_name, email, region, country, city, home_currency, acquisition_channel, signup_date, is_active]
+    columns: [customer_id, first_name, last_name, region, country, city, home_currency, acquisition_channel, signup_date, is_active]
+    notes: >
+      email exists on the underlying gold table but is deliberately left
+      off this list -- it is a personal identifier this assistant never
+      exposes, by data governance policy, not because it happens to be
+      missing from a result. Never select it even if a question seems to
+      call for it -- see business_glossary.yaml's PII rule. A query that
+      references it anyway is hard-rejected by
+      pipelines/governance/sql/01_validate_gold_sql.sql regardless of what
+      this context file tells you, so leaving it off here is belt, that
+      function is suspenders.
 
   dim_product:
     grain: "1 row per SKU"

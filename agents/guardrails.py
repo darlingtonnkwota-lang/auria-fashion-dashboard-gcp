@@ -29,6 +29,7 @@
 # combination below is enough to prove the pattern end to end.
 
 import concurrent.futures
+import re
 
 from google.cloud import bigquery
 
@@ -66,6 +67,62 @@ ALLOWED_TABLES = {
     "gold_supplier_performance",
     "gold_sales_forecast",
 }
+
+# Governance demo addition -- requested to make an explicit point when
+# showing this to stakeholders: a question naming a personal-identifier
+# category this dataset NEVER collected anywhere (no SIN/SSN, phone,
+# mailing address, date of birth, or government-ID column exists in
+# Bronze/Silver/Gold at all) must be REJECTED outright, not answered with
+# "I couldn't find that" -- that phrasing implies a search happened and
+# came up empty, which would wrongly suggest the assistant *would*
+# disclose the value if a matching row existed. Checked here, in plain
+# Python, before the SQL agent or BigQuery are even called, so the
+# rejection is instant and deterministic -- it never depends on the LLM
+# correctly recognizing the request as out of scope.
+#
+# This is deliberately separate from the dim_customer.email case (which
+# IS a real column -- see pipelines/governance/sql/01_validate_gold_sql.sql
+# for that enforcement). Nothing below has ever existed as a column, so
+# there is no query that could ever answer it, regardless of phrasing.
+RESTRICTED_TOPIC_PATTERNS = [
+    (r"\bsin\b|social insurance", "a social insurance number (SIN)"),
+    (r"\bssn\b|social security", "a social security number (SSN)"),
+    (r"passport", "a passport number"),
+    (r"driver'?s?\s+licen[sc]e", "a driver's license number"),
+    (r"credit card|debit card|card number|cvv", "a payment card number"),
+    (r"bank account|routing number|iban\b", "a bank account number"),
+    (r"date of birth|\bdob\b|birth ?date", "a date of birth"),
+    (r"phone number|telephone number|cell(?:phone)? number|mobile number", "a phone number"),
+    (r"home address|mailing address|street address|residential address", "a home address"),
+    (r"tax id|government id|national id|driver'?s?\s+id", "a government ID number"),
+]
+
+
+def check_restricted_topic(question: str) -> str | None:
+    """Returns a rejection message if the question asks for a personal-
+    identifier category that has never existed anywhere in this dataset,
+    else None. Called by orchestrator.answer_question before the SQL
+    agent drafts anything.
+
+    Keyword-based on purpose, not a schema lookup: these fields were
+    never collected in Bronze/Silver/Gold in the first place (unlike
+    email, which does exist and is blocked separately, at the SQL layer,
+    because it's a real column an agent could still reference). No
+    amount of clever SQL could ever answer one of these -- the rejection
+    is about the request, not about what a query returned.
+    """
+    lowered = question.lower()
+    for pattern, label in RESTRICTED_TOPIC_PATTERNS:
+        if re.search(pattern, lowered):
+            return (
+                f"This asks for {label}, which this dataset has never collected and this "
+                "assistant will never expose. That's a data governance rule, not a search "
+                "that came up empty -- personal identifiers like this aren't in scope "
+                "regardless of whether a matching customer exists. The customer data "
+                "available here is limited to business attributes: name, region, "
+                "lifetime spend, and order history."
+            )
+    return None
 
 
 class GuardrailRejected(Exception):

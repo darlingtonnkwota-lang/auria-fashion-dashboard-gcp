@@ -79,11 +79,13 @@ function MessageBubble({ message }: { message: ChatMessage }) {
 
           <ResultTable response={message.response} />
 
-          <details className="chat-sql-disclosure">
-            <summary>SQL used</summary>
-            <p className="chat-rationale">{message.response.sql_rationale}</p>
-            <pre>{message.response.sql}</pre>
-          </details>
+          {message.response.sql && (
+            <details className="chat-sql-disclosure">
+              <summary>SQL used</summary>
+              <p className="chat-rationale">{message.response.sql_rationale}</p>
+              <pre>{message.response.sql}</pre>
+            </details>
+          )}
         </div>
       )}
     </div>

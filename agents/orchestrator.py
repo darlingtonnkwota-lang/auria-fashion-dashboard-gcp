@@ -17,7 +17,7 @@
 # `executor` is a BigQueryExecutor (agents/executors.py); this module
 # never touches BigQuery directly.
 
-from agents import insight_agent, sql_agent, validation_agent
+from agents import guardrails, insight_agent, sql_agent, validation_agent
 
 
 def answer_question(
@@ -39,6 +39,28 @@ def answer_question(
     to end, instead of letting one bad draft take down a whole batch of
     questions.
     """
+    # Governance demo addition: a restricted-topic question (SIN, phone
+    # number, home address, date of birth, etc. -- see
+    # guardrails.check_restricted_topic) is rejected right here, before
+    # the SQL agent or BigQuery are touched at all. It's deterministic
+    # and instant on purpose -- the rejection can't depend on the LLM
+    # happening to recognize the request as out of scope, and it must
+    # never be phrased as "couldn't find it" (see that function's
+    # docstring for why).
+    restricted_reason = guardrails.check_restricted_topic(question)
+    if restricted_reason:
+        return {
+            "question": question,
+            "filters": filters or {},
+            "sql": "",
+            "sql_rationale": "(no SQL drafted -- rejected before reaching the SQL agent)",
+            "rejected": True,
+            "rejection_reason": restricted_reason,
+            "rows": [],
+            "columns": [],
+            "answer": restricted_reason,
+        }
+
     try:
         draft = sql_agent.draft_sql(question, filters=filters, history=history)
     except Exception as exc:  # noqa: BLE001 -- surfaced as a disclosed rejection, not a crash
