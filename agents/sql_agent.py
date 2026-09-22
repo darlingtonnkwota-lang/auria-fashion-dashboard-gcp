@@ -6,9 +6,11 @@
 # validation_agent.py for the execution step, which is the only place a
 # query actually touches data.
 #
-# Ported from the Databricks build's agents/sql_agent.py -- identical
-# logic, the only change is the import (llm_client instead of
-# claude_client) and the system prompt's platform reference.
+# Ported from the Databricks build's agents/sql_agent.py -- the prompt,
+# tool schema, and fenced-code fallback are unchanged. Two GCP-specific
+# additions beyond the import swap (llm_client instead of claude_client):
+# a forced tool_choice (see _one_attempt) so Gemini can't opt out of
+# drafting SQL, and one internal retry before giving up (see draft_sql).
 
 import re
 
@@ -85,7 +87,17 @@ def _one_attempt(input_items: list, system_prompt: str) -> dict | None:
             input_items,
             instructions=system_prompt,
             tools=[PROPOSE_SQL_TOOL],
-            tool_choice="auto",
+            # "required" (Gemini's ANY mode), not "auto": with auto, Gemini
+            # sometimes opts out of calling propose_sql entirely and answers
+            # in plain prose explaining a data-model limitation instead --
+            # e.g. for "is the return rate concentrated by region or size"
+            # or "did lead time contribute to stockouts", it would rather
+            # explain the gap than draft its best-effort SQL and disclose
+            # the assumption, even though the system prompt asks for
+            # exactly that. Forcing the call removes that escape hatch; a
+            # genuinely bad/out-of-scope draft still gets caught downstream
+            # by the guardrail layer, so nothing unsafe slips through.
+            tool_choice="required",
             max_output_tokens=1500,
         )
         call = llm_client.extract_function_call(response, name="propose_sql")
