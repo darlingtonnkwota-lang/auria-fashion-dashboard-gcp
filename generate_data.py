@@ -30,7 +30,7 @@ OUT_DIR = os.path.join(os.path.dirname(__file__), "output")
 os.makedirs(OUT_DIR, exist_ok=True)
 
 START_DATE = date(2022, 1, 1)
-TODAY = date(2026, 9, 15)          # "as of" date for this generation run
+TODAY = date(2026, 9, 21)          # "as of" date for this generation run
 TOTAL_DAYS = (TODAY - START_DATE).days
 
 def days_to_date(d):
