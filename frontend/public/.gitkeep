@@ -1,0 +1,6 @@
+This file exists only so the frontend/public directory is tracked by
+git (git does not track empty directories). The frontend Dockerfile's
+runner stage does `COPY --from=builder /app/public ./public`, which is
+the standard Next.js standalone-output pattern - it fails outright if
+the directory doesn't exist at all, which is what broke build-frontend
+in Cloud Build (build dc7b607e's frontend step / build 1982477c).
