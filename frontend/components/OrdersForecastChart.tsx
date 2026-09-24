@@ -34,7 +34,7 @@ function pad(n: number) {
 export default function OrdersForecastChart({ monthlyKpis, forecast, loading }: Props) {
   if (loading) {
     return (
-      <Card title="Orders: history + 6-month forecast" eyebrow="ARIMA_PLUS · 90% interval">
+      <Card title="Orders: history + 6-month forecast" eyebrow="ARIMA_PLUS">
         <CardLoading />
       </Card>
     );
@@ -49,7 +49,7 @@ export default function OrdersForecastChart({ monthlyKpis, forecast, loading }: 
 
   if (history.length === 0) {
     return (
-      <Card title="Orders: history + 6-month forecast" eyebrow="ARIMA_PLUS · 90% interval">
+      <Card title="Orders: history + 6-month forecast" eyebrow="ARIMA_PLUS">
         <CardEmpty />
       </Card>
     );
@@ -94,11 +94,10 @@ export default function OrdersForecastChart({ monthlyKpis, forecast, loading }: 
   }
 
   return (
-    <Card title="Orders: history + 6-month forecast" eyebrow="ARIMA_PLUS · 90% interval">
+    <Card title="Orders: history + 6-month forecast" eyebrow="ARIMA_PLUS">
       <div className="chart-legend">
         <span><i className="legend-swatch" style={{ background: palette.cyan }} /> Actual</span>
         <span><i className="legend-swatch" style={{ background: palette.purple }} /> Forecast</span>
-        <span><i className="legend-swatch" style={{ background: "rgba(139,92,246,0.35)" }} /> 90% interval</span>
       </div>
       <ResponsiveContainer width="100%" height={280}>
         <ComposedChart data={merged} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
@@ -132,11 +131,16 @@ export default function OrdersForecastChart({ monthlyKpis, forecast, loading }: 
               return [Number(value).toLocaleString("en-US", { maximumFractionDigits: 0 }), name === "actual" ? "Actual" : "Forecast"];
             }}
           />
-          {/* Decorative fill only (no stroke -- the Line below draws the
-              dashed edge) so the purple shadow reaches all the way down
-              to the axis under the forecast, matching how the cyan fill
-              sits under actual history. Kept out of the "band" stack so
-              it doesn't distort the 90% interval ribbon. */}
+          {/* This is now the ONLY fill under the forecast segment -- the
+              same technique as the "actual" Area below (fill only, no
+              stroke; the dashed Line draws the edge), so the forecast
+              shadow mirrors history's exactly: one smooth gradient
+              reaching down to the axis, not a separate band sitting on
+              the line. (An earlier version also drew a translucent
+              90%-interval ribbon here; removed after live feedback that
+              it read as an unwanted "thickened shadow" right at the
+              line instead of a clean fade underneath it, like the cyan
+              fill.) */}
           <Area
             type="monotone"
             dataKey="forecastLine"
@@ -144,14 +148,6 @@ export default function OrdersForecastChart({ monthlyKpis, forecast, loading }: 
             stroke="none"
             fill="url(#ordersForecastFill)"
             connectNulls
-            isAnimationActive={false}
-          />
-          <Area dataKey="bandBase" stackId="band" stroke="none" fill="transparent" isAnimationActive={false} />
-          <Area
-            dataKey="bandHeight"
-            stackId="band"
-            stroke="none"
-            fill="rgba(139,92,246,0.22)"
             isAnimationActive={false}
           />
           <Area
