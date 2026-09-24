@@ -107,6 +107,13 @@ export default function OrdersForecastChart({ monthlyKpis, forecast, loading }: 
               <stop offset="0%" stopColor={palette.cyan} stopOpacity={0.35} />
               <stop offset="100%" stopColor={palette.cyan} stopOpacity={0.02} />
             </linearGradient>
+            {/* Same gradient language as ordersActualFill, in purple, so the
+                shaded area under the curve carries through the forecast
+                segment instead of stopping dead at the history boundary. */}
+            <linearGradient id="ordersForecastFill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={palette.purple} stopOpacity={0.32} />
+              <stop offset="100%" stopColor={palette.purple} stopOpacity={0.02} />
+            </linearGradient>
           </defs>
           <CartesianGrid stroke={palette.grid} vertical={false} />
           <XAxis dataKey="month" stroke={palette.muted} fontSize={11} tickLine={false} axisLine={false} />
@@ -121,9 +128,23 @@ export default function OrdersForecastChart({ monthlyKpis, forecast, loading }: 
           <Tooltip
             contentStyle={CHART_TOOLTIP_STYLE}
             formatter={(value: number, name: string) => {
-              if (name === "bandHeight" || name === "bandBase") return [null, null];
+              if (name === "bandHeight" || name === "bandBase" || name === "forecastFillArea") return [null, null];
               return [Number(value).toLocaleString("en-US", { maximumFractionDigits: 0 }), name === "actual" ? "Actual" : "Forecast"];
             }}
+          />
+          {/* Decorative fill only (no stroke -- the Line below draws the
+              dashed edge) so the purple shadow reaches all the way down
+              to the axis under the forecast, matching how the cyan fill
+              sits under actual history. Kept out of the "band" stack so
+              it doesn't distort the 90% interval ribbon. */}
+          <Area
+            type="monotone"
+            dataKey="forecastLine"
+            name="forecastFillArea"
+            stroke="none"
+            fill="url(#ordersForecastFill)"
+            connectNulls
+            isAnimationActive={false}
           />
           <Area dataKey="bandBase" stackId="band" stroke="none" fill="transparent" isAnimationActive={false} />
           <Area
