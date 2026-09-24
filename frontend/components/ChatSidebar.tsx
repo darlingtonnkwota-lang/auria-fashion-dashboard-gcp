@@ -75,6 +75,9 @@ function MessageBubble({ message }: { message: ChatMessage }) {
             </div>
           ) : null}
 
+          {!message.response.rejected && (
+            <p className="chat-answer-heading">Analysis</p>
+          )}
           <p className="chat-answer-text">{message.response.answer}</p>
 
           <ResultTable response={message.response} />

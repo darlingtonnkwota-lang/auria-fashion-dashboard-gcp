@@ -601,6 +601,18 @@ table.data-table tbody tr:hover {
   font-size: 0.87rem;
 }
 
+.chat-answer-heading {
+  margin: 0 0 4px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  background: linear-gradient(135deg, var(--accent-purple), var(--accent-pink));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
 .chat-answer-text {
   margin: 0 0 6px;
   white-space: pre-wrap;

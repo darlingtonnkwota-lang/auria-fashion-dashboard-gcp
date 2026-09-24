@@ -14,23 +14,33 @@
 # collapsible "SQL used" panel already discloses the exact SQL). The
 # "suggest a format" instruction was never wired to anything on the
 # frontend side either -- it always renders the real table regardless
-# of what this agent says -- so business users were seeing a wall of
-# SQL and a duplicate ASCII-ish table above the real, nicely-formatted
-# one. This agent's only job now is the plain-English narrative that
-# goes with those two things, not a restatement of either.
+# of what this agent says -- so that instruction was pure dead weight,
+# and the model's most natural way to "disclose the SQL" was to paste
+# it. This agent's only job now is the plain-English narrative that goes
+# with those two things, not a restatement of either.
 #
 # Second round of feedback, after the SQL/table fix landed: the fix
-# traded too far toward terse -- a flat 2-5 sentence single paragraph
-# read as "one mushed up paragraph" and too high-level for diagnostic
-# questions (e.g. "why is the return rate high for these products").
-# This revision keeps every rule above (no SQL, no code block, no
-# markdown table, no chart-format suggestion) but asks for real
-# diagnostic substance -- magnitudes, comparisons, likely drivers --
-# and, only when the question genuinely has two distinct things to say,
-# a second paragraph separated by a blank line. ChatSidebar.tsx renders
-# this text with `white-space: pre-wrap`, so a literal blank line in the
-# response (\n\n between paragraphs) shows up as real visual spacing
-# with no frontend change needed.
+# traded too far toward terse -- a flat single paragraph read as "one
+# mushed up paragraph" and too high-level for diagnostic questions. That
+# revision asked for real substance and allowed a second paragraph "when
+# warranted" -- but in practice the model kept defaulting to one
+# paragraph even for genuinely multi-part diagnostic answers (e.g. a
+# correlation question backed by four separate product examples), so a
+# third round below makes the two-paragraph split the default for any
+# answer with real analytical content, not just an optional escape
+# hatch, and reserves one paragraph for truly simple lookups only.
+#
+# Third round (this revision): two changes. (1) The paragraph-break rule
+# is now a concrete template (headline paragraph, then supporting-detail
+# paragraph) instead of a soft "if warranted" suggestion, because the
+# soft version wasn't reliably triggering. (2) The frontend now renders
+# its own static "Analysis" heading above every answer
+# (ChatSidebar.tsx), so this prompt explicitly tells the model not to
+# add its own heading/label line -- avoiding a doubled-up "Analysis /
+# Analysis:" look. ChatSidebar.tsx renders the answer with
+# `white-space: pre-wrap`, so a literal blank line in the response
+# (\n\n between paragraphs) shows up as real visual paragraph spacing
+# with no other frontend change needed.
 
 import json
 
@@ -45,22 +55,26 @@ numbers, not a one-line headline.
 
 Rules:
 - Never state a number that isn't present in the query results you were given.
-- Lead with the direct answer to the question -- the standout figure(s) --
-  in the first sentence or two. Then go deeper: quantify how big the gap
-  or trend is, name the specific rows/segments that stand out (and by how
-  much), call out a plausible driver or pattern the data itself shows,
-  and note any comparison the data supports (vs. other rows, vs. a prior
-  period, vs. the overall average). Only state a driver the data actually
-  supports; if the data doesn't say why, say what stands out without
-  guessing at a cause.
-- Default to plain prose in a single paragraph. If -- and only if -- the
-  question has enough substance for two distinct ideas (for example: the
-  headline finding, then a separate paragraph of supporting detail, a
-  notable exception, or a business implication), write it as two short
-  paragraphs separated by one blank line. Do not force a second paragraph
-  on a simple lookup that only has one thing to say -- a single number or
-  a short ranking should stay one tight paragraph. Never use more than
-  two paragraphs, and never use headers, bullet points, or numbered lists.
+- Structure: write two short paragraphs, separated by exactly one blank
+  line, for any answer that involves a comparison, a ranking, a trend, a
+  driver, or more than one noteworthy data point -- which is nearly
+  every one of these business questions. First paragraph: the direct
+  answer to the question -- the standout figure(s) -- in 1-3 sentences.
+  Second paragraph: back it up with real substance -- name the specific
+  rows/segments that stand out and by how much, quantify the size of
+  the gap or trend, call out a plausible driver or pattern the data
+  itself shows (only if the data actually supports it -- never invent a
+  cause), and note a comparison the data supports (vs. other rows, a
+  prior period, or the overall average). Only fall back to a single
+  short paragraph when the question is a genuinely simple lookup with
+  nothing more to add -- one number, one name, a yes/no. Never use more
+  than two paragraphs, and never use headers, bullet points, or
+  numbered lists inside a paragraph.
+- Do not start your answer with a heading, label, or restatement of the
+  question (e.g. do not write "Analysis:", "Summary:", or "Answer:") --
+  the application already shows its own heading above your answer, so
+  starting with one of your own would just duplicate it. Start directly
+  with the finding.
 - Never include the SQL query text, a ```sql code block, or a markdown
   table/list of the result rows in your answer. The application already
   shows the exact SQL in a separate, collapsible "SQL used" panel right
