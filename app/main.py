@@ -199,3 +199,46 @@ def supplier_performance():
         ORDER BY avg_actual_lead_time_days DESC
     """
     return query(sql)
+
+
+@app.get("/api/dashboard/product-performance")
+def product_performance():
+    # Diagnostic view, not a leaderboard: one row per product, all-time,
+    # so a scatter/bubble chart can show volume (lines_sold) against
+    # return_rate_pct with revenue_usd sizing each bubble -- the products
+    # worth worrying about are the ones that are both high-volume AND
+    # high-return, which a top-5-by-return-rate table (see
+    # returns_by_product above) can't show on its own: a niche product
+    # with a 40% return rate on 10 units matters far less than a
+    # bestseller with a 12% return rate on 3,000 units.
+    #
+    # gold_returns_by_product_monthly and gold_top_products_monthly are
+    # both monthly grain, so each is aggregated to an all-time total per
+    # product before joining -- same "sum first, then divide" pattern
+    # metric_specs.yaml requires for return_rate_pct (never average a
+    # per-month rate across months, that would weight a slow month and a
+    # busy month equally).
+    sql = f"""
+        WITH returns_agg AS (
+            SELECT product_id,
+                   SUM(lines_sold) AS lines_sold,
+                   SUM(return_count) AS return_count,
+                   SAFE_DIVIDE(SUM(return_count), SUM(lines_sold)) * 100 AS return_rate_pct
+            FROM {authorized('gold_returns_by_product_monthly')}
+            GROUP BY product_id
+        ),
+        revenue_agg AS (
+            SELECT product_id, SUM(revenue_usd) AS revenue_usd
+            FROM {authorized('gold_top_products_monthly')}
+            GROUP BY product_id
+        )
+        SELECT p.product_id, p.product_name, p.category,
+               r.lines_sold, r.return_rate_pct,
+               COALESCE(v.revenue_usd, 0) AS revenue_usd
+        FROM returns_agg r
+        JOIN {authorized('dim_product')} p ON p.product_id = r.product_id
+        LEFT JOIN revenue_agg v ON v.product_id = r.product_id
+        WHERE r.lines_sold > 0
+        ORDER BY r.lines_sold DESC
+    """
+    return query(sql)

@@ -5,8 +5,10 @@ import FilterBar from "@/components/FilterBar";
 import ChatSidebar from "@/components/ChatSidebar";
 import KpiCards from "@/components/KpiCards";
 import RevenueForecastChart from "@/components/RevenueForecastChart";
+import OrdersForecastChart from "@/components/OrdersForecastChart";
 import MarginReturnChart from "@/components/MarginReturnChart";
 import ChannelPerformanceChart from "@/components/ChannelPerformanceChart";
+import ProductPerformanceScatter from "@/components/ProductPerformanceScatter";
 import TopProductsTable from "@/components/TopProductsTable";
 import TopCustomersTable from "@/components/TopCustomersTable";
 import SupplierPerformanceTable from "@/components/SupplierPerformanceTable";
@@ -20,6 +22,7 @@ import {
   TopCustomerRow,
   ChannelPerformanceRow,
   SupplierPerformanceRow,
+  ProductPerformanceRow,
 } from "@/lib/types";
 
 // Phase 7 -- the dashboard is now fully native (Recharts components
@@ -37,6 +40,7 @@ interface DashboardData {
   topCustomers: TopCustomerRow[];
   channelPerformance: ChannelPerformanceRow[];
   supplierPerformance: SupplierPerformanceRow[];
+  productPerformance: ProductPerformanceRow[];
 }
 
 const EMPTY_DATA: DashboardData = {
@@ -47,6 +51,7 @@ const EMPTY_DATA: DashboardData = {
   topCustomers: [],
   channelPerformance: [],
   supplierPerformance: [],
+  productPerformance: [],
 };
 
 async function getJson<T>(path: string): Promise<T> {
@@ -65,7 +70,7 @@ export default function Home() {
     let cancelled = false;
     async function load() {
       try {
-        const [monthlyKpis, ytd, forecast, topProducts, topCustomers, channelPerformance, supplierPerformance] =
+        const [monthlyKpis, ytd, forecast, topProducts, topCustomers, channelPerformance, supplierPerformance, productPerformance] =
           await Promise.all([
             getJson<MonthlyKpiRow[]>("/api/dashboard/monthly-kpis"),
             getJson<YtdRow[]>("/api/dashboard/ytd"),
@@ -74,9 +79,10 @@ export default function Home() {
             getJson<TopCustomerRow[]>("/api/dashboard/top-customers"),
             getJson<ChannelPerformanceRow[]>("/api/dashboard/channel-performance"),
             getJson<SupplierPerformanceRow[]>("/api/dashboard/supplier-performance"),
+            getJson<ProductPerformanceRow[]>("/api/dashboard/product-performance"),
           ]);
         if (!cancelled) {
-          setData({ monthlyKpis, ytd, forecast, topProducts, topCustomers, channelPerformance, supplierPerformance });
+          setData({ monthlyKpis, ytd, forecast, topProducts, topCustomers, channelPerformance, supplierPerformance, productPerformance });
           setLoading(false);
         }
       } catch (err) {
@@ -115,8 +121,10 @@ export default function Home() {
 
           <div className="chart-grid">
             <RevenueForecastChart monthlyKpis={data.monthlyKpis} forecast={data.forecast} loading={loading} />
+            <OrdersForecastChart monthlyKpis={data.monthlyKpis} forecast={data.forecast} loading={loading} />
             <MarginReturnChart monthlyKpis={data.monthlyKpis} loading={loading} />
             <ChannelPerformanceChart data={data.channelPerformance} loading={loading} />
+            <ProductPerformanceScatter data={data.productPerformance} loading={loading} />
             <TopProductsTable data={data.topProducts} loading={loading} />
             <TopCustomersTable data={data.topCustomers} loading={loading} />
             <SupplierPerformanceTable data={data.supplierPerformance} loading={loading} />

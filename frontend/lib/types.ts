@@ -119,3 +119,15 @@ export interface SupplierPerformanceRow {
   stated_avg_lead_time_days: number;
   reliability_score: number;
 }
+
+// Diagnostic scatter/bubble source -- one row per product, all-time
+// (not year-scoped, unlike ReturnsByProductRow above): volume
+// (lines_sold) x return_rate_pct, with revenue_usd sizing the bubble.
+export interface ProductPerformanceRow {
+  product_id: string;
+  product_name: string;
+  category: string;
+  lines_sold: number;
+  return_rate_pct: number;
+  revenue_usd: number;
+}
