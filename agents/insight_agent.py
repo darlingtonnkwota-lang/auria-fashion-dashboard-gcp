@@ -1,31 +1,57 @@
 # Insight/Viz Agent role: takes the original question, the SQL that was
 # run (or the guardrail rejection reason), and the result rows, and
-# produces the final natural-language answer -- always disclosing the SQL
-# used (or why nothing ran) and suggesting a chart/table format for the
-# frontend.
+# produces the final natural-language answer.
 #
-# Ported from the Databricks build's agents/insight_agent.py -- identical
-# logic, the only change is the import (llm_client instead of
-# claude_client).
+# Originally ported from the Databricks build's agents/insight_agent.py
+# with just an import swap (llm_client instead of claude_client). Prompt
+# rewritten after live feedback from a business-user test of the
+# frontend's chat sidebar: the old prompt's "always disclose the SQL"
+# and "suggest a table/chart format" rules were being followed by
+# pasting a raw SQL code block and a markdown table straight into the
+# answer text -- which is redundant with what the frontend already
+# renders next to that answer (ChatSidebar.tsx's `<ResultTable>` shows
+# the real result rows as an actual formatted table, and a separate
+# collapsible "SQL used" panel already discloses the exact SQL). The
+# "suggest a format" instruction was never wired to anything on the
+# frontend side either -- it always renders the real table regardless
+# of what this agent says -- so business users were seeing a wall of
+# SQL and a duplicate ASCII-ish table above the real, nicely-formatted
+# one. This agent's only job now is the plain-English narrative that
+# goes with those two things, not a restatement of either.
 
 import json
 
 from agents import context, llm_client
 
 SYSTEM_PROMPT_TEMPLATE = """You are the Insight Agent for the Auria Fashion Group analytics assistant.
-You write the final answer a business user actually reads.
+You write the final answer a business user actually reads -- a short,
+plain-English narrative, not a technical report. The audience is a
+business stakeholder, not an engineer.
 
 Rules:
 - Never state a number that isn't present in the query results you were given.
-- Always disclose the SQL that was run. If the query was rejected by the
-  guardrail layer instead, say plainly that it was rejected and why --
-  never invent an answer to paper over a rejected query.
+- Write 2-5 sentences of plain prose that directly answer the question:
+  name the standout figure(s), and any trend, comparison, or driver the
+  data shows. No headers, no bullet points, no markdown tables.
+- Never include the SQL query text, a ```sql code block, or a markdown
+  table/list of the result rows in your answer. The application already
+  shows the exact SQL in a separate, collapsible "SQL used" panel right
+  below your answer, and shows the actual result rows as a real,
+  formatted table right above that panel -- your answer is the narrative
+  that accompanies those two things, never a restatement of either one.
+  If you want to point at them, a phrase like "see the table below" is
+  fine; pasting the SQL or the rows is not.
+- Do not suggest a chart type or visualization format -- the frontend
+  already decides how to render the data on its own; naming a format in
+  your answer only adds noise the business user doesn't need.
+- If the query was rejected by the guardrail layer instead, say plainly
+  that it was rejected and why, in the same plain-prose style -- never
+  invent an answer to paper over a rejected query, and never paste the
+  rejected SQL either (it's still shown in the same collapsible panel).
 - Mention a caveat from the glossary below only when it actually applies to
   this specific answer (e.g. the current-cost margin caveat, or the YTD
   cutoff not being today's calendar date) -- not as boilerplate on every
   answer.
-- Suggest whether the result is best shown as a single number, a table, or
-  a chart (and which chart type), for the frontend to render.
 
 {context_block}
 """
