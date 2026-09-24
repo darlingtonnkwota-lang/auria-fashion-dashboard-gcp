@@ -22,6 +22,36 @@ function activeFilterEntries(filters: Filters): [string, string][] {
   return (Object.entries(filters) as [string, string][]).filter(([, v]) => v);
 }
 
+// Every gold/authorized-view column in this project follows one of two
+// suffix conventions (see context/schema_reference.yaml): a dollar
+// amount always ends "_usd" (revenue_usd, aov_usd, margin_usd, ...) and
+// a percentage always ends "_pct" (return_rate_pct, margin_pct, ...).
+// The SQL agent drafts its SELECT against those same columns (or
+// aliases derived from them), so formatting by column-name suffix is
+// reliable here, not a guess -- a plain count/volume column (order_count,
+// lines_sold, stockout_count) has neither suffix and is left as a
+// compact, comma-grouped number instead.
+function formatCell(column: string, value: unknown): string {
+  if (value === null || value === undefined || value === "") return "";
+
+  const num = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(num)) return String(value);
+
+  const col = column.toLowerCase();
+
+  if (col.endsWith("_usd")) {
+    return `$${num.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  }
+  if (col.endsWith("_pct") || col.includes("percent")) {
+    return `${num.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
+  }
+  // Plain numbers (counts, volumes, days, etc.): compact, comma-
+  // separated, and only as many decimals as the value actually has
+  // (capped at 2) -- an integer like order_count stays a clean "4,735"
+  // rather than "4,735.00".
+  return num.toLocaleString("en-US", { maximumFractionDigits: 2 });
+}
+
 function ResultTable({ response }: { response: AskResponse }) {
   if (response.rejected || response.rows.length === 0) return null;
   const previewRows = response.rows.slice(0, 10);
@@ -39,7 +69,7 @@ function ResultTable({ response }: { response: AskResponse }) {
           {previewRows.map((row, i) => (
             <tr key={i}>
               {response.columns.map((c) => (
-                <td key={c}>{String(row[c] ?? "")}</td>
+                <td key={c}>{formatCell(c, row[c])}</td>
               ))}
             </tr>
           ))}
